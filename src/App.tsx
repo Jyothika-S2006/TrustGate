@@ -13,10 +13,14 @@ type EventRow = {
   timestamp: string;
   source: string;
   action: string;
-  decision: 'allow' | 'deny' | 'review';
+  decision: 'allow' | 'deny' | 'review' | 'error';
   status: 'success' | 'warning' | 'error' | 'pending';
   detail: string;
   policy?: string;
+  agent?: string;
+  tool?: string;
+  token_id?: string;
+  trace_id?: string;
 };
 
 type ReceiptRow = {
@@ -24,11 +28,17 @@ type ReceiptRow = {
   action: string;
   actor: string;
   requestedAt: string;
-  decision: 'allow' | 'deny' | 'review';
+  decision: 'allow' | 'deny' | 'review' | 'error';
+  status: string;
   policy: string;
   evidence: string[];
   tool: string;
   outcome: string;
+  agent?: string;
+  tokenId?: string;
+  traceId?: string;
+  rawResult?: Record<string, unknown>;
+  reason?: string;
 };
 
 type PolicyRow = {
@@ -50,7 +60,7 @@ type AuditRow = {
 };
 
 const navItems = ['Overview', 'Agent Exchange', 'Policies', 'Audit Trail', 'Trust Receipt'];
-const defaultDemoMessage = 'Local mock enforcement path enabled: actual ArmorIQ SDK is not installed in this environment.';
+const defaultDemoMessage = 'Run a workflow to see live ArmorIQ SDK decisions. No tool request has been made yet.';
 
 const statusStyles: Record<string, string> = {
   allow: 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30',
@@ -102,6 +112,8 @@ function App() {
   const [selectedReceipt, setSelectedReceipt] = useState<ReceiptRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [demoMessage, setDemoMessage] = useState(defaultDemoMessage);
+  const [lastQuote, setLastQuote] = useState<{ part: string; quantity: number; unit_price?: number; total: number | null } | null>(null);
+  const [lastPurchaseOrder, setLastPurchaseOrder] = useState<{ status: string; po_id: string } | null>(null);
 
   const loadData = async () => {
     setLoading(true);
@@ -123,7 +135,7 @@ function App() {
       setAudit(auditData.entries);
     } catch (error) {
       console.error(error);
-      setDemoMessage('Unable to reach the TrustGate backend. Start the FastAPI app before using the demo flow.');
+      setDemoMessage(`Unable to load live TrustGate data: ${String(error)}`);
     } finally {
       setLoading(false);
     }
@@ -147,34 +159,51 @@ function App() {
     setLoading(true);
     try {
       if (kind === 'quote') {
-        const result = await fetchJson<{ quote: { total: number; part: string; quantity: number }; receipt: ReceiptRow }>('/api/quote', {
+        const result = await fetchJson<{ quote: { total: number | null; part: string; quantity: number }; calls: ReceiptRow[]; receipt: ReceiptRow }>('/api/quote', {
           method: 'POST',
           body: JSON.stringify({ part: '12-ALPHA', quantity: 400 }),
         });
-        setDemoMessage(`Quote accepted: ${result.quote.part} x ${result.quote.quantity} for $${result.quote.total.toFixed(2)}.`);
+        setLastQuote(result.quote);
+        const quoteCall = result.calls[0];
+        setDemoMessage(
+          quoteCall?.decision === 'allow' && result.quote
+            ? `ArmorIQ allowed ${quoteCall.agent} → ${quoteCall.tool}; token ${quoteCall.tokenId ?? 'not returned'}. Quote ${result.quote.part} x ${result.quote.quantity}: ${result.quote.total === null ? 'amount unavailable' : `$${result.quote.total.toFixed(2)}`}.`
+            : `ArmorIQ ${quoteCall?.decision ?? 'error'} for ${quoteCall?.tool ?? 'get_quote'}: ${quoteCall?.reason ?? quoteCall?.status ?? 'no decision returned'}.`,
+        );
       }
 
       if (kind === 'po') {
-        const result = await fetchJson<{ po: { status: string; reference: string }; receipt: ReceiptRow }>('/api/purchase-order', {
+        const result = await fetchJson<{ po: { status: string; po_id: string } | null; receipt: ReceiptRow }>('/api/purchase-order', {
           method: 'POST',
-          body: JSON.stringify({}),
+          body: JSON.stringify({ vendor: 'Northstar Components', item: '12-ALPHA', qty: 400, amount: 19600 }),
         });
-        setDemoMessage(`Draft PO created: ${result.po.reference} (${result.po.status}).`);
+        setLastPurchaseOrder(result.po);
+        setDemoMessage(
+          result.receipt.decision === 'allow'
+            ? `ArmorIQ allowed ${result.receipt.agent} → ${result.receipt.tool}; draft ${result.po?.po_id ?? 'created'}. Token ${result.receipt.tokenId ?? 'not returned'}.`
+            : `ArmorIQ ${result.receipt.decision} for ${result.receipt.tool}: ${result.receipt.reason ?? result.receipt.outcome}.`,
+        );
       }
 
       if (kind === 'deny') {
-        const result = await fetchJson<{ decision: string; policy: string; reason: string; status: string; evidence: string[]; executed: boolean; tool: string; receipt: ReceiptRow }>('/api/enforce', {
+        const result = await fetchJson<{ calls: ReceiptRow[]; attack: ReceiptRow | null }>('/api/attack', {
           method: 'POST',
-          body: JSON.stringify({ action: 'inventory.export --all-contracts', tool: 'inventory.export', reason: 'Attempt to export all contracts without approval' }),
         });
-        setDemoMessage(`Denied: ${result.policy}. ${result.reason}. Tool executed: ${result.executed ? 'yes' : 'no'}.`);
+        const attack = result.attack;
+        setDemoMessage(
+          attack?.decision === 'deny'
+            ? `ArmorIQ blocked ${attack.agent} → ${attack.tool}: ${attack.reason}. Tool executed: no. Token ${attack.tokenId ?? 'not returned'}${attack.traceId ? ` · Trace ${attack.traceId}` : ''}.`
+            : attack
+              ? `ArmorIQ returned ${attack.decision} for ${attack.tool}: ${attack.reason ?? attack.status}.`
+              : `Attack attempt did not reach submit_order. ${result.calls[result.calls.length - 1]?.reason ?? 'See returned ArmorIQ call details.'}`,
+        );
       }
 
       await loadData();
       setActivePage('Trust Receipt');
     } catch (error) {
       console.error(error);
-      setDemoMessage('The demo action failed because the backend is offline or responding with an error.');
+      setDemoMessage(`ArmorIQ action failed: ${String(error)}`);
     } finally {
       setLoading(false);
     }
@@ -250,38 +279,39 @@ function App() {
               </div>
 
               <div className="rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-glow backdrop-blur-lg">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Exchange status</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">ArmorIQ activity</p>
                 <div className="mt-5 flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
                   <div className="flex items-center gap-3">
                     <div className="rounded-full bg-emerald-500/10 p-2 text-emerald-300"><Activity className="h-4 w-4" /></div>
                     <div>
-                      <div className="text-sm font-medium text-white">System healthy</div>
-                      <div className="text-xs text-slate-400">Policy pipeline operational</div>
+                      <div className="text-sm font-medium text-white">SDK invocation history</div>
+                      <div className="text-xs text-slate-400">Live decisions returned by ArmorIQ</div>
                     </div>
                   </div>
-                  <span className="text-sm font-medium text-emerald-300">99.3%</span>
+                  <span className="text-sm font-medium text-emerald-300">{metrics[0]?.value ?? '0'}</span>
                 </div>
                 <div className="mt-6 space-y-4">
-                  {[
-                    { id: 1, title: 'Request quote', owner: 'Buyer Agent', status: 'completed', detail: 'Buyer asks for a synthetic part quote from inventory.' },
-                    { id: 2, title: 'Vendor quote returned', owner: 'Vendor Agent', status: 'completed', detail: 'Quote tool returned pricing for 400 units of model 12-ALPHA.' },
-                    { id: 3, title: 'Draft PO created', owner: 'Buyer Agent', status: 'active', detail: 'Draft created and awaiting approval before commit.' },
-                    { id: 4, title: 'Policy check', owner: 'ArmorIQ Proxy', status: 'pending', detail: 'Review unauthorized export attempt before tool call.' },
-                  ].map((step) => (
-                    <div key={step.id} className="flex gap-3">
+                  {events.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+                      No ArmorIQ tool calls recorded yet.
+                    </div>
+                  ) : events.slice(0, 4).map((event, index) => (
+                    <div key={event.id} className="flex gap-3">
                       <div className="flex flex-col items-center">
-                        <div className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs ${step.status === 'completed' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : step.status === 'active' ? 'border-violet-500/40 bg-violet-500/10 text-violet-300' : 'border-slate-700 bg-slate-800 text-slate-400'}`}>
-                          {step.id}
+                        <div className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs ${event.decision === 'allow' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : event.decision === 'deny' ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-slate-700 bg-slate-800 text-slate-400'}`}>
+                          {index + 1}
                         </div>
-                        {step.id !== 4 && <div className="mt-2 h-9 w-px bg-slate-700" />}
+                        {index < Math.min(events.length, 4) - 1 && <div className="mt-2 h-9 w-px bg-slate-700" />}
                       </div>
                       <div className="flex-1 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-white">{step.title}</span>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${statusStyles[step.status]}`}>{step.status}</span>
+                          <span className="text-sm font-medium text-white">{event.tool || event.action}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${statusStyles[event.decision]}`}>{event.decision}</span>
                         </div>
-                        <p className="mt-2 text-xs text-slate-400">{step.owner}</p>
-                        <p className="mt-1 text-sm text-slate-300">{step.detail}</p>
+                        <p className="mt-2 text-xs text-slate-400">{event.agent || event.source}</p>
+                        <p className="mt-1 text-sm text-slate-300">{event.detail}</p>
+                        {event.token_id && <p className="mt-2 break-all font-mono text-[10px] text-slate-500">Token: {event.token_id}</p>}
+                        {event.trace_id && <p className="break-all font-mono text-[10px] text-slate-500">Trace: {event.trace_id}</p>}
                       </div>
                     </div>
                   ))}
@@ -303,10 +333,10 @@ function App() {
                   <div className="rounded-full bg-violet-500/10 p-2 text-violet-300"><Sparkles className="h-5 w-5" /></div>
                 </div>
                 <div className="mt-5 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
-                  <p className="text-sm text-slate-300">Requesting synthetic inventory quote for 400 units of model 12-ALPHA.</p>
+                  <p className="text-sm text-slate-300">Buyer requests a quote through ArmorIQ for synthetic inventory.</p>
                   <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm">
-                    <span className="text-slate-400">Status</span>
-                    <button type="button" onClick={() => void handleAction('quote')} className="inline-flex items-center gap-2 text-emerald-300 hover:text-emerald-200"><CheckCircle2 className="h-4 w-4" /> Trigger quote</button>
+                    <span className="text-slate-400">Latest quote</span>
+                    <span className="text-white">{lastQuote ? `${lastQuote.part} × ${lastQuote.quantity}` : 'Not requested'}</span>
                   </div>
                 </div>
               </div>
@@ -320,10 +350,10 @@ function App() {
                   <div className="rounded-full bg-cyan-500/10 p-2 text-cyan-300"><Zap className="h-5 w-5" /></div>
                 </div>
                 <div className="mt-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-                  <p className="text-sm text-slate-300">Local inventory tool emits a quote response for approval and downstream purchase order generation.</p>
+                  <p className="text-sm text-slate-300">Quote and inventory are returned by the registered synthetic MCP server via ArmorIQ.</p>
                   <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm">
-                    <span className="text-slate-400">Quote value</span>
-                    <button type="button" onClick={() => void handleAction('po')} className="text-white hover:text-cyan-200">$19,600.00</button>
+                    <span className="text-slate-400">{lastPurchaseOrder ? `Draft ${lastPurchaseOrder.status}` : 'Latest quote total'}</span>
+                    <span className="text-white">{lastPurchaseOrder?.po_id ?? (lastQuote?.total === null || !lastQuote ? 'No result yet' : `$${lastQuote.total.toFixed(2)}`)}</span>
                   </div>
                 </div>
               </div>
@@ -340,22 +370,26 @@ function App() {
 
               <div className="mt-5 grid gap-4 lg:grid-cols-4">
                 {[
-                  { title: 'Quote requested', detail: 'Buyer asks for inventory quote', status: 'done' },
-                  { title: 'Quote returned', detail: 'Vendor tool returns pricing', status: 'done' },
-                  { title: 'Draft PO', detail: 'Buyer drafts PO for approval', status: 'active' },
-                  { title: 'Unauthorized action', detail: 'Blocked by policy proxy', status: 'blocked' },
-                ].map((item, index) => (
+                  { title: 'Quote requested', tool: 'get_quote' },
+                  { title: 'Inventory checked', tool: 'read_inventory' },
+                  { title: 'Draft PO', tool: 'create_draft_po' },
+                  { title: 'Unauthorized action', tool: 'submit_order' },
+                ].map((item, index) => {
+                  const call = events.find((event) => event.tool === item.tool);
+                  const state = call?.decision === 'allow' ? 'allowed' : call?.decision === 'deny' ? 'blocked' : call?.decision === 'error' ? 'error' : 'not run';
+                  return (
                   <div key={item.title} className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
                     <div className="flex items-center justify-between">
                       <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Step {index + 1}</span>
-                      <span className={`rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.2em] ${item.status === 'done' ? 'bg-emerald-500/10 text-emerald-300' : item.status === 'active' ? 'bg-violet-500/10 text-violet-300' : 'bg-rose-500/10 text-rose-300'}`}>
-                        {item.status}
+                      <span className={`rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.2em] ${state === 'allowed' ? statusStyles.allow : state === 'blocked' ? statusStyles.deny : state === 'error' ? statusStyles.error : statusStyles.pending}`}>
+                        {state}
                       </span>
                     </div>
                     <h4 className="mt-3 text-base font-medium text-white">{item.title}</h4>
-                    <p className="mt-2 text-sm text-slate-300">{item.detail}</p>
+                    <p className="mt-2 text-sm text-slate-300">{call?.detail ?? `No ArmorIQ invocation recorded for ${item.tool}.`}</p>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="mt-6 flex flex-wrap gap-3">
@@ -375,7 +409,7 @@ function App() {
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Security policy</p>
                   <h3 className="mt-2 text-xl font-semibold text-white">Configured permissions</h3>
                 </div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs uppercase tracking-[0.2em] text-slate-300"><Lock className="h-3.5 w-3.5" /> Demo policy</div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs uppercase tracking-[0.2em] text-slate-300"><Lock className="h-3.5 w-3.5" /> ArmorIQ policy</div>
               </div>
 
               <div className="space-y-3">
@@ -512,11 +546,15 @@ function App() {
                     </div>
 
                     <div className="space-y-4 text-sm">
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Agent</div><div className="mt-1 text-white">{selectedReceipt.agent ?? selectedReceipt.actor}</div></div>
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Action</div><div className="mt-1 text-white">{selectedReceipt.action}</div></div>
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Tool</div><div className="mt-1 text-white">{selectedReceipt.tool}</div></div>
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Policy</div><div className="mt-1 text-white">{selectedReceipt.policy}</div></div>
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">ArmorIQ reason</div><div className="mt-1 text-white">{selectedReceipt.policy || selectedReceipt.outcome || 'No reason returned.'}</div></div>
+                      {selectedReceipt.tokenId && <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Intent token ID</div><div className="mt-1 break-all font-mono text-xs text-white">{selectedReceipt.tokenId}</div></div>}
+                      {selectedReceipt.traceId && <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Trace ID</div><div className="mt-1 break-all font-mono text-xs text-white">{selectedReceipt.traceId}</div></div>}
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Evidence</div><ul className="mt-2 space-y-2 text-slate-200">{selectedReceipt.evidence.map((item) => (<li key={item} className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-300" /><span>{item}</span></li>))}</ul></div>
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Outcome</div><div className="mt-1 text-white">{selectedReceipt.outcome}</div></div>
+                      {selectedReceipt.rawResult && <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-slate-400">Raw ArmorIQ result</div><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs text-slate-300">{JSON.stringify(selectedReceipt.rawResult, null, 2)}</pre></div>}
                     </div>
                   </>
                 ) : (
