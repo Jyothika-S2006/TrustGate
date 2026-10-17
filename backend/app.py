@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import sqlite3
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -19,6 +20,7 @@ from armoriq_sdk.exceptions import ArmorIQException
 DB_PATH = Path(__file__).resolve().parent / 'trustgate.db'
 MCP_NAME = 'trustgate-mcp'
 logger = logging.getLogger(__name__)
+load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -57,7 +59,12 @@ app.add_middleware(
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run('backend.app:app', host='127.0.0.1', port=8000, reload=False)
+    uvicorn.run(
+        'backend.app:app',
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', '8000')),
+        reload=False,
+    )
 
 
 @app.on_event('startup')

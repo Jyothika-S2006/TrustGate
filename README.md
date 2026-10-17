@@ -29,7 +29,7 @@ TrustGate is a polished demo dashboard for a cross-company AI agent trust workfl
    python backend/app.py
    ```
 
-   The SDK reads `ARMORIQ_API_KEY` from the process environment or uses credentials saved by `armoriq login`.
+   Copy `.env.example` to `.env` and add your own `ARMORIQ_API_KEY`, or use credentials saved by `armoriq login`. `.env` is ignored by Git.
 
 4. In a second terminal, start the frontend:
    ```bash
@@ -76,3 +76,22 @@ See [`trustgate-mcp/README.md`](./trustgate-mcp/README.md) for local and Render 
 - No real payments, credentials, or external business systems are used.
 - All data is synthetic and local only.
 - Backend credentials are not committed to the repository.
+
+## Deploy frontend and backend
+
+The frontend belongs to the repository root; the API is a separate Render service.
+
+### Render API
+
+1. In Render, create a **Blueprint** from this GitHub repository and accept the `trustgate-api` web service defined in [`render.yaml`](./render.yaml). Alternatively create a Python web service manually with root directory `.`, build command `pip install -r requirements.txt`, start command `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`, and health path `/api/health`.
+2. In the API service's Environment settings, set `ARMORIQ_API_KEY` to your secret and `FRONTEND_URL` to the Vercel site origin (for example `https://your-project.vercel.app`). Do not add the key to GitHub, Vercel, or frontend `VITE_` variables.
+3. Deploy and confirm `https://<render-api-host>/api/health` reports `status: ok`.
+
+### Vercel frontend
+
+1. Import this repository into Vercel and keep **Root Directory** set to `.` (repository root).
+2. Use build command `npm run build` and output directory `dist` (also present in [`vercel.json`](./vercel.json)).
+3. Add `VITE_API_BASE_URL` with the Render API base URL, such as `https://trustgate-api.onrender.com`, then deploy or redeploy.
+4. Copy the resulting Vercel origin into Render's `FRONTEND_URL` if it changed, and redeploy the API if needed.
+
+The existing MCP remains its own Render service under [`trustgate-mcp/`](./trustgate-mcp/README.md). The API's SQLite database is local demo history and may reset when a free service restarts or redeploys.
