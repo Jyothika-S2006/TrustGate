@@ -2,6 +2,10 @@
 
 TrustGate is a polished demo dashboard for a cross-company AI agent trust workflow. It presents a secure, dark cybersecurity-style SaaS interface for managing buyer/vendor exchanges, policy enforcement, audit visibility, and trust receipts.
 
+## Live demo
+
+Try the deployed TrustGate dashboard: [trust-gate-ten.vercel.app](https://trust-gate-ten.vercel.app/).
+
 ## Stack
 
 - React + Vite + TypeScript + Tailwind CSS
