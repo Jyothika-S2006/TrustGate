@@ -83,7 +83,7 @@ The frontend belongs to the repository root; the API is a separate Render servic
 
 ### Render API
 
-1. In Render, create a **Blueprint** from this GitHub repository and accept the `trustgate-api` web service defined in [`render.yaml`](./render.yaml). Alternatively create a Python web service manually with root directory `.`, build command `pip install -r requirements.txt`, start command `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`, and health path `/api/health`.
+1. In Render, create a **Blueprint** from this GitHub repository and accept the `trustgate-api` web service defined in [`render.yaml`](./render.yaml). It pins the service to Python 3.13.4, which is supported by `armoriq-sdk==0.6.10`. Alternatively create a Python web service manually with root directory `.`, Python version `3.13.4`, build command `pip install -r requirements.txt`, start command `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`, and health path `/api/health`.
 2. In the API service's Environment settings, set `ARMORIQ_API_KEY` to your secret and `FRONTEND_URL` to the Vercel site origin (for example `https://your-project.vercel.app`). Do not add the key to GitHub, Vercel, or frontend `VITE_` variables.
 3. Deploy and confirm `https://<render-api-host>/api/health` reports `status: ok`.
 
