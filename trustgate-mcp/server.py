@@ -7,6 +7,7 @@ from typing import Any
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -17,7 +18,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger("trustgate-mcp")
 
-mcp = FastMCP("TrustGate synthetic procurement", stateless_http=True, json_response=True)
+mcp = FastMCP(
+    "TrustGate synthetic procurement",
+    stateless_http=True,
+    json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            "trustgate-goqf.onrender.com",
+            "localhost",
+            "localhost:*",
+            "127.0.0.1",
+            "127.0.0.1:*",
+        ],
+        allowed_origins=[
+            "https://trustgate-goqf.onrender.com",
+            "http://localhost",
+            "http://localhost:*",
+            "http://127.0.0.1",
+            "http://127.0.0.1:*",
+        ],
+    ),
+)
 
 INVENTORY = {
     "12-ALPHA": {"available": 900, "unit_price": 49.00},
