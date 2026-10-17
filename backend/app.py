@@ -56,17 +56,6 @@ app.add_middleware(
 )
 
 
-if __name__ == '__main__':
-    import uvicorn
-
-    uvicorn.run(
-        'backend.app:app',
-        host='0.0.0.0',
-        port=int(os.environ.get('PORT', '8000')),
-        reload=False,
-    )
-
-
 @app.on_event('startup')
 def initialize_database() -> None:
     with get_db_connection() as connection:
@@ -564,3 +553,14 @@ def policies() -> dict[str, Any]:
             'submit_order',
         ],
     }
+
+
+if __name__ == '__main__':
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', '8000')),
+        reload=False,
+    )
